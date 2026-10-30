@@ -10,7 +10,7 @@ const NAV = [
   { id: 'pipeline', label: 'Pipeline', component: PipelinePage },
   { id: 'safety', label: 'Safety', component: SafetyPage },
   { id: 'atc', label: 'ATC Decoder', component: AtcPage },
-  { id: 'chat', label: 'Ask Ria', component: ChatPage },
+  { id: 'chat', label: 'Assistant', component: ChatPage },
 ];
 
 export default function App() {

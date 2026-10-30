@@ -36,10 +36,11 @@ export default function ChatPage() {
 
   return (
     <div className="page">
-      <h2>Ask Ria</h2>
+      <h2>Graph Assistant</h2>
       <p className="subtitle">
         A local GraphRAG assistant (Ollama + LangGraph) grounded in the knowledge graph —
-        it can expand MeSH terms, search documents, decode ATC codes, and pull safety data.
+        it expands MeSH terms, searches documents, decodes ATC codes, and pulls safety
+        and pipeline data. Every fact comes from the graph, with the tool trace shown.
       </p>
       <div className="card">
         <div className="chatlog" ref={logRef}>
@@ -59,7 +60,10 @@ export default function ChatPage() {
               {m.text}
               {m.tools?.length > 0 && (
                 <div className="tools">
-                  🔧 used: {m.tools.map((t) => `${t.tool}(${Object.values(t.args).join(', ')})`).join(' → ')}
+                  🔧 used: {m.tools.map((t) => `${t.tool}(${
+                    Object.values(t.args || {}).map((v) =>
+                      typeof v === 'string' ? v : JSON.stringify(v)).join(', ')
+                  })`).join(' → ')}
                 </div>
               )}
             </div>

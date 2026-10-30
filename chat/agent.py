@@ -21,7 +21,7 @@ from langgraph.prebuilt import create_react_agent
 
 from etl.neo4j_client import run
 
-OLLAMA_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "llama3.2:3b")
+OLLAMA_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "qwen3.6:27b-mlx")
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
@@ -153,6 +153,40 @@ def similar_drugs(drug_name: str) -> str:
 
 
 @tool
+def disease_overview(disease: str) -> str:
+    """One-call overview of a disease: indicated drugs and, for each, the FAERS
+    report count and top reactions. Use this for compound questions like
+    'which drugs treat X and what reactions do they have'."""
+    from api.main import expand_term
+    result = expand_term(disease)
+    if result is None:
+        return f"No MeSH descriptor matched {disease!r}."
+    rows = run(
+        """
+        MATCH (m:MeshDescriptor)<-[:INDICATED_FOR]-(d:Drug)
+        WHERE toLower(m.name) IN [t IN $terms | toLower(t)]
+        OPTIONAL MATCH (d)-[:HAS_REPORT]->(r:AdverseEventReport)
+        OPTIONAL MATCH (r)-[:REPORTS_REACTION]->(x:Reaction)
+        RETURN d.name AS drug, count(DISTINCT r) AS reports,
+               collect(DISTINCT x.name)[..5] AS topReactions
+        ORDER BY reports DESC
+        """,
+        terms=result["terms"],
+    )
+    if not rows:
+        return f"No drugs in the graph are indicated for {result['descriptor']}."
+    lines = [f"Drugs indicated for {result['descriptor']} (expanded: {len(result['terms'])} terms):"]
+    for r in rows:
+        line = f"- {r['drug']}: {r['reports']} FAERS reports"
+        if r["topReactions"]:
+            line += f"; top reactions: {', '.join(r['topReactions'])}"
+        else:
+            line += "; no FAERS data loaded"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+@tool
 def semantic_search(query: str) -> str:
     """Semantic (vector) search over drug names, document titles, reactions,
     and active MeSH descriptors — use for fuzzy/conceptual questions."""
@@ -174,16 +208,21 @@ def semantic_search(query: str) -> str:
     return "Top semantic matches:\n" + "\n".join(hits[:10]) if hits else "No vector index data."
 
 
-TOOLS = [mesh_expand, search_documents, drug_safety, trials_pipeline,
-         decode_atc, similar_drugs, semantic_search]
+TOOLS = [disease_overview, mesh_expand, search_documents, drug_safety,
+         trials_pipeline, decode_atc, similar_drugs, semantic_search]
 
 SYSTEM_PROMPT = (
-    "You are Ria, a regulatory intelligence assistant for the pharmaceutical domain. "
-    "You answer questions about drugs, diseases, regulatory documents, clinical trials, "
-    "and drug safety using the connected Neo4j knowledge graph via your tools. "
-    "Always ground answers in tool results — never invent drug, trial, or safety facts. "
-    "Be concise and business-friendly: lead with the answer, then supporting detail. "
-    "When listing documents or trials, mention counts and the top few items."
+    "You are a regulatory intelligence graph assistant for the pharmaceutical domain. "
+    "Answer using ONLY the knowledge graph via your tools. Hard rules: "
+    "1) NEVER invent drug names, trial IDs (NCT numbers), reaction names, or statistics — "
+    "every fact must come verbatim from a tool result. "
+    "2) If a tool returns no data, say the graph has no data for that question — do not "
+    "fill gaps with general medical knowledge. "
+    "3) For compound questions (drugs for a disease AND their reactions), call "
+    "disease_overview once; it returns the full chain. "
+    "4) Call tools with plain argument values only (e.g. {\"disease\": \"diabetes\"}) — "
+    "never emit query DSL or filter syntax. "
+    "Be concise and business-friendly: lead with the answer, then supporting detail."
 )
 
 _agent = None

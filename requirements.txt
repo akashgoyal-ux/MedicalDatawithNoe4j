@@ -1,0 +1,11 @@
+neo4j>=6.0
+rdflib>=7.0
+requests>=2.31
+pandas>=2.2
+fastapi>=0.115
+uvicorn[standard]>=0.30
+streamlit>=1.38
+pytest>=8.0
+python-dotenv>=1.0
+pyahocorasick>=2.0
+lxml>=5.0

@@ -1,0 +1,25 @@
+// Constraints & indexes per implementation plan section 5.3
+CREATE CONSTRAINT atc_l5_code IF NOT EXISTS
+FOR (n:ATCLevel5) REQUIRE n.code IS UNIQUE;
+CREATE CONSTRAINT atc_l1_code IF NOT EXISTS
+FOR (n:ATCLevel1) REQUIRE n.code IS UNIQUE;
+CREATE CONSTRAINT atc_l2_code IF NOT EXISTS
+FOR (n:ATCLevel2) REQUIRE n.code IS UNIQUE;
+CREATE CONSTRAINT atc_l3_code IF NOT EXISTS
+FOR (n:ATCLevel3) REQUIRE n.code IS UNIQUE;
+CREATE CONSTRAINT atc_l4_code IF NOT EXISTS
+FOR (n:ATCLevel4) REQUIRE n.code IS UNIQUE;
+CREATE CONSTRAINT mesh_ui IF NOT EXISTS
+FOR (n:MeshDescriptor) REQUIRE n.ui IS UNIQUE;
+CREATE CONSTRAINT mesh_term_ui IF NOT EXISTS
+FOR (n:MeshTerm) REQUIRE (n.name, n.descriptorUi) IS UNIQUE;
+CREATE CONSTRAINT drug_name IF NOT EXISTS
+FOR (n:Drug) REQUIRE n.name IS UNIQUE;
+CREATE CONSTRAINT doc_id IF NOT EXISTS
+FOR (n:RegulatoryDocument) REQUIRE n.docId IS UNIQUE;
+CREATE CONSTRAINT agency_name IF NOT EXISTS
+FOR (n:Agency) REQUIRE n.name IS UNIQUE;
+CREATE FULLTEXT INDEX meshNames IF NOT EXISTS
+FOR (n:MeshDescriptor|MeshTerm) ON EACH [n.name];
+CREATE FULLTEXT INDEX drugNames IF NOT EXISTS
+FOR (n:Drug) ON EACH [n.name, n.synonyms];

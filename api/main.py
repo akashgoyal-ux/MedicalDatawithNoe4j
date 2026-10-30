@@ -293,6 +293,29 @@ def list_drugs(with_reports: bool = False):
     return [r["n"] for r in run("MATCH (d:Drug) RETURN d.name AS n ORDER BY n")]
 
 
+@app.get("/stats")
+def graph_stats():
+    """Live graph statistics, enumerated from the ontology registry —
+    every declared node class and edge type is counted."""
+    from etl.ontology import SCHEMA
+    nodes = {name: run(f"MATCH (n:{name}) RETURN count(n) AS c")[0]["c"]
+             for name in SCHEMA.nodes}
+    edges = {name: run(f"MATCH ()-[r:{name}]->() RETURN count(r) AS c")[0]["c"]
+             for name in SCHEMA.edges}
+    embedded = run("MATCH (n) WHERE n.embedding IS NOT NULL RETURN count(n) AS c")[0]["c"]
+    vector_indexes = [r["name"] for r in run(
+        "SHOW INDEXES YIELD name, type WHERE type = 'VECTOR' RETURN name")]
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "embeddedNodes": embedded,
+        "vectorIndexes": vector_indexes,
+        "chatModel": os.getenv("OLLAMA_CHAT_MODEL", "qwen3.6:27b-mlx"),
+        "embedModel": os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text"),
+        "ontology": {"classes": len(SCHEMA.nodes), "edgeTypes": len(SCHEMA.edges)},
+    }
+
+
 @app.get("/health")
 def health():
     return run("RETURN 1 AS ok")[0]

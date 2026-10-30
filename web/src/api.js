@@ -12,6 +12,7 @@ async function get(path, params = {}) {
 
 export const api = {
   health: () => get('/health'),
+  stats: () => get('/stats'),
   search: (term, depth = 13) => get('/search', { term, depth, limit: 50 }),
   expand: (term) => get('/expand', { term }),
   timeline: (term) => get('/timeline', { term }),

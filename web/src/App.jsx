@@ -22,7 +22,7 @@ export default function App() {
     <>
       <header className="topbar">
         <div className="brand">
-          Ria<span>·</span>Prototype
+          Med<span>Graph</span>
           <small>Regulatory intelligence on Neo4j — MeSH · ATC · FAERS · Trials</small>
         </div>
         <nav className="nav">

@@ -1,8 +1,9 @@
-# Medical Data with Neo4j — Prototype
+# MedGraph — Medical Data with Neo4j
 
-A working prototype of the architecture from the talk
+MedGraph: a working prototype of the architecture from the talk
 [Enhancing Medical Data Processing with Neo4j](https://www.youtube.com/watch?v=6JMMip1FTxY)
-(see [implementation-plan.md](./implementation-plan.md) and [transcript.md](./transcript.md)):
+(see [implementation-plan.md](./implementation-plan.md) and [transcript.md](./transcript.md)) —
+read the full write-up in [docs/blog.md](./docs/blog.md):
 
 - **WHO ATC classification** loaded as a 5-level tree (drug "biographies" — e.g. `C03XA01` = tolvaptan).
 - **NLM MeSH 2026** loaded as a multi-parent DAG (descriptors, tree numbers, entry-term synonyms).

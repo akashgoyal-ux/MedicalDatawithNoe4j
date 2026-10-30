@@ -11,6 +11,7 @@ Usage: python -m etl.embed_nodes [--model nomic-embed-text]
 """
 import argparse
 import logging
+import os
 
 import requests
 
@@ -19,37 +20,27 @@ from etl.neo4j_client import run, run_write
 log = logging.getLogger("embed_nodes")
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
-OLLAMA_EMBED_URL = "http://localhost:11434/api/embed"
+OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_EMBED_URL = f"{OLLAMA_BASE}/api/embed"
 DIMENSIONS = 768  # nomic-embed-text
-BATCH = 32
+BATCH = 64
 
+# Every text-bearing node class gets embedded; one vector index per label.
 SETS = {
-    "Drug": {
-        "match": "MATCH (n:Drug) RETURN elementId(n) AS id, n.name AS text",
-        "index": "drugEmbedding",
-    },
-    "DrugAlias": {
-        "match": "MATCH (n:DrugAlias) RETURN elementId(n) AS id, n.name AS text",
-        "index": "aliasEmbedding",
-    },
-    "RegulatoryDocument": {
-        "match": "MATCH (n:RegulatoryDocument) RETURN elementId(n) AS id, n.title AS text",
-        "index": "docEmbedding",
-    },
-    "Reaction": {
-        "match": "MATCH (n:Reaction) RETURN elementId(n) AS id, n.name AS text",
-        "index": "reactionEmbedding",
-    },
-    "MeshDescriptor": {
-        "match": """
-            MATCH (n:MeshDescriptor)
-            WHERE EXISTS { (:RegulatoryDocument)-[:MENTIONS]->(n) }
-               OR EXISTS { (:Drug)-[:INDICATED_FOR]->(n) }
-               OR EXISTS { (:Trial)-[:STUDIES]->(n) }
-            RETURN elementId(n) AS id, n.name AS text
-        """,
-        "index": "meshEmbedding",
-    },
+    "Drug": {"text": "n.name", "index": "drugEmbedding"},
+    "DrugAlias": {"text": "n.name", "index": "aliasEmbedding"},
+    "RegulatoryDocument": {"text": "n.title", "index": "docEmbedding"},
+    "Reaction": {"text": "n.name", "index": "reactionEmbedding"},
+    "MeshDescriptor": {"text": "n.name", "index": "meshEmbedding"},
+    "MeshTerm": {"text": "n.name", "index": "termEmbedding"},
+    "Trial": {"text": "n.title", "index": "trialEmbedding"},
+    "Sponsor": {"text": "n.name", "index": "sponsorEmbedding"},
+    "Agency": {"text": "n.name", "index": "agencyEmbedding"},
+    "ATCLevel1": {"text": "n.name", "index": "atc1Embedding"},
+    "ATCLevel2": {"text": "n.name", "index": "atc2Embedding"},
+    "ATCLevel3": {"text": "n.name", "index": "atc3Embedding"},
+    "ATCLevel4": {"text": "n.name", "index": "atc4Embedding"},
+    "ATCLevel5": {"text": "n.name", "index": "atc5Embedding"},
 }
 
 
@@ -73,7 +64,10 @@ def create_indexes() -> None:
 
 
 def embed_set(label: str, cfg: dict, model: str) -> int:
-    rows = [r for r in run(cfg["match"]) if r["text"]]
+    rows = [r for r in run(
+        f"MATCH (n:{label}) WHERE n.embedding IS NULL "
+        f"RETURN elementId(n) AS id, {cfg['text']} AS text"
+    ) if r["text"]]
     done = 0
     for i in range(0, len(rows), BATCH):
         chunk = rows[i : i + BATCH]

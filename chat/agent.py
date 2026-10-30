@@ -1,10 +1,15 @@
 """GraphRAG chatbot: LangGraph ReAct agent over the medical Neo4j graph.
 
-Runs fully local: ChatOllama (llama3.2) as the LLM, tools call the same
-Cypher queries as the REST API — MeSH expansion, document search, ATC decode,
-FAERS safety, trials pipeline, similarity, and vector semantic search.
+Runs fully local: ChatOllama (qwen3.6:27b-mlx) as the LLM. Uses the official
+LangChain-Neo4j integrations (langchain-neo4j):
+  - Neo4jGraph          — live schema grounding for the LLM
+  - GraphCypherQAChain  — natural-language -> Cypher for ad-hoc questions
+  - Neo4jVector         — semantic search over the graph's vector indexes
+plus deterministic tools for the critical paths (MeSH expansion, FAERS
+safety, trials, ATC decode, similarity).
 
-Used by api/main.py /chat and can be run standalone:
+Requires Python 3.12 venv (langchain legacy chains are broken on 3.15).
+
     python -m chat.agent "Which drugs are indicated for diabetes and what reactions do they have?"
 """
 import sys
@@ -14,16 +19,49 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import os
 
-import requests
 from langchain_core.tools import tool
-from langchain_ollama import ChatOllama
+from langchain_neo4j import GraphCypherQAChain, Neo4jGraph, Neo4jVector
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langgraph.prebuilt import create_react_agent
 
+from etl.config import neo4j_settings
 from etl.neo4j_client import run
 
 OLLAMA_MODEL = os.getenv("OLLAMA_CHAT_MODEL", "qwen3.6:27b-mlx")
 OLLAMA_BASE = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+
+_graph = None
+_vector_stores: dict = {}
+
+
+def get_graph() -> Neo4jGraph:
+    """LangChain Neo4jGraph wrapper — introspects the live schema so the LLM
+    writes Cypher against actual labels/properties."""
+    global _graph
+    if _graph is None:
+        cfg = neo4j_settings()
+        _graph = Neo4jGraph(url=cfg["uri"], username=cfg["user"],
+                            password=cfg["password"], database=cfg["database"],
+                            enhanced_schema=True)
+    return _graph
+
+
+# our indexes embed n.title for documents/trials, n.name for everything else
+_TEXT_PROP = {"docEmbedding": "title", "trialEmbedding": "title"}
+
+
+def get_vector_store(index_name: str) -> Neo4jVector:
+    """LangChain Neo4jVector over our existing Neo4j vector indexes."""
+    if index_name not in _vector_stores:
+        cfg = neo4j_settings()
+        _vector_stores[index_name] = Neo4jVector.from_existing_index(
+            embedding=OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_BASE),
+            url=cfg["uri"], username=cfg["user"], password=cfg["password"],
+            database=cfg["database"], index_name=index_name,
+            text_node_property=_TEXT_PROP.get(index_name, "name"),
+        )
+    return _vector_stores[index_name]
 
 
 @tool
@@ -189,27 +227,39 @@ def disease_overview(disease: str) -> str:
 @tool
 def semantic_search(query: str) -> str:
     """Semantic (vector) search over drug names, document titles, reactions,
-    and active MeSH descriptors — use for fuzzy/conceptual questions."""
-    r = requests.post(f"{OLLAMA_BASE}/api/embed",
-                      json={"model": EMBED_MODEL, "input": [query]}, timeout=120)
-    r.raise_for_status()
-    vec = r.json()["embeddings"][0]
+    MeSH descriptors and synonyms, and trial titles — use for fuzzy or
+    conceptual questions where exact terminology is unknown."""
     hits = []
     for index, kind in (("docEmbedding", "document"), ("meshEmbedding", "disease term"),
-                        ("reactionEmbedding", "reaction"), ("drugEmbedding", "drug")):
-        rows = run(
-            f"""
-            CALL db.index.vector.queryNodes('{index}', 3, $vec) YIELD node, score
-            RETURN coalesce(node.title, node.name) AS text, score
-            """,
-            vec=vec,
-        )
-        hits.extend(f"- [{kind}] {r['text']} (score {r['score']:.3f})" for r in rows)
-    return "Top semantic matches:\n" + "\n".join(hits[:10]) if hits else "No vector index data."
+                        ("termEmbedding", "synonym"), ("reactionEmbedding", "reaction"),
+                        ("trialEmbedding", "trial"), ("drugEmbedding", "drug")):
+        try:
+            for doc, score in get_vector_store(index).similarity_search_with_score(query, k=3):
+                hits.append(f"- [{kind}] {doc.page_content} (score {score:.3f})")
+        except Exception:
+            continue  # index may not exist yet while embeddings load
+    return ("Top semantic matches:\n" + "\n".join(hits[:10])) if hits else "No vector index data."
+
+
+@tool
+def graph_qa(question: str) -> str:
+    """Answer an ad-hoc question about the graph by generating and running a
+    Cypher query (LangChain GraphCypherQAChain over the live schema). Use for
+    questions not covered by the other tools, e.g. counts, sponsor rankings,
+    or unusual relationship questions."""
+    llm = ChatOllama(model=OLLAMA_MODEL, base_url=OLLAMA_BASE, temperature=0)
+    chain = GraphCypherQAChain.from_llm(
+        llm, graph=get_graph(), allow_dangerous_requests=True,
+        return_intermediate_steps=True, top_k=25,
+    )
+    result = chain.invoke({"query": question})
+    steps = result.get("intermediate_steps", [])
+    cypher = steps[0]["query"] if steps else ""
+    return f"Generated Cypher:\n{cypher}\n\nAnswer:\n{result['result']}"
 
 
 TOOLS = [disease_overview, mesh_expand, search_documents, drug_safety,
-         trials_pipeline, decode_atc, similar_drugs, semantic_search]
+         trials_pipeline, decode_atc, similar_drugs, semantic_search, graph_qa]
 
 SYSTEM_PROMPT = (
     "You are a regulatory intelligence graph assistant for the pharmaceutical domain. "
@@ -222,6 +272,8 @@ SYSTEM_PROMPT = (
     "disease_overview once; it returns the full chain. "
     "4) Call tools with plain argument values only (e.g. {\"disease\": \"diabetes\"}) — "
     "never emit query DSL or filter syntax. "
+    "5) For questions no dedicated tool covers (counts, rankings, unusual joins), "
+    "use graph_qa — it generates Cypher over the live schema."
     "Be concise and business-friendly: lead with the answer, then supporting detail."
 )
 

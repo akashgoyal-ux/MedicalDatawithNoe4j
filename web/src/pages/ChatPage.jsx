@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
 import { api } from '../api';
 
 const SUGGESTIONS = [
@@ -57,18 +58,38 @@ export default function ChatPage() {
           )}
           {messages.map((m, i) => (
             <div key={i} className={`msg ${m.role === 'user' ? 'user' : 'bot'}`}>
-              {m.text}
+              {m.role === 'user' ? m.text : (
+                <div className="markdown">
+                  <ReactMarkdown
+                    components={{
+                      a: ({ href, children }) => (
+                        <a href={href} target="_blank" rel="noreferrer">{children}</a>
+                      ),
+                    }}
+                  >{m.text}</ReactMarkdown>
+                </div>
+              )}
               {m.tools?.length > 0 && (
                 <div className="tools">
-                  🔧 used: {m.tools.map((t) => `${t.tool}(${
-                    Object.values(t.args || {}).map((v) =>
-                      typeof v === 'string' ? v : JSON.stringify(v)).join(', ')
-                  })`).join(' → ')}
+                  <span className="tools-label">grounded via</span>
+                  {m.tools.map((t, j) => (
+                    <span className="toolchip" key={j}>
+                      {t.tool}
+                      <span className="toolargs">
+                        ({Object.values(t.args || {}).map((v) =>
+                          typeof v === 'string' ? v : JSON.stringify(v)).join(', ')})
+                      </span>
+                    </span>
+                  ))}
                 </div>
               )}
             </div>
           ))}
-          {loading && <div className="msg bot loading">Thinking with the graph…</div>}
+          {loading && (
+            <div className="msg bot loading">
+              <span className="thinking-dot" /> Thinking with the graph…
+            </div>
+          )}
         </div>
         <form className="searchrow" style={{ marginBottom: 0 }}
               onSubmit={(e) => { e.preventDefault(); send(); }}>

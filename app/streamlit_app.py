@@ -18,8 +18,8 @@ from api.main import expand_term
 from etl.config import neo4j_browser_url, neo4j_settings
 from etl.neo4j_client import run
 
-st.set_page_config(page_title="Regulatory Intelligence Prototype", layout="wide")
-st.title("🧬 Regulatory Intelligence Prototype")
+st.set_page_config(page_title="MedGraph — Regulatory Intelligence", layout="wide")
+st.title("🧬 MedGraph")
 st.caption("Graph-assisted search expansion with Neo4j — MeSH + WHO ATC "
            "(replica of the 'Enhancing Medical Data Processing with Neo4j' talk)")
 

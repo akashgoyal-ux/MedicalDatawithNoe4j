@@ -131,46 +131,40 @@ fine for internal/R&D use.
 
 ## 4. Architecture
 
-```
-+--------------------------+        +---------------------------+
-|        SOURCES           |        |            ETL            |
-|                          |        |                           |
-|  WHO ATC Index           |------->|  ATC parser (Python)      |--+
-|  (atcddd.fhi.no)         |        |                           |  |
-+--------------------------+        +---------------------------+  |
-                                                                   |
-+--------------------------+        +---------------------------+  |
-|        SOURCES           |        |            ETL            |  |
-|                          |        |                           |  |
-|  MeSH RDF / XML (NLM)    |------->|  MeSH RDF->CSV            |--+
-|  (2026 release)          |        |  (Python + rdflib)        |  |
-+--------------------------+        +---------------------------+  |
-                                                                   |
-+--------------------------+        +---------------------------+  |
-|        SOURCES           |        |            ETL            |  |
-|                          |        |                           |  |
-|  openFDA / DailyMed /    |------->|  Doc ingest + NER         |--+
-|  EMA regulatory docs     |        |  (tag docs w/ ATC + MeSH) |  |
-+--------------------------+        +---------------------------+  |
-                                                                   v
-+------------------------------------------------------------------------+
-|                  Neo4j 5.x (Community / Aura)                          |
-|                                                                        |
-|   (ATC Graph: 5 levels)   (MeSH Graph: 16 categories, DAG)             |
-|   (Documents: Drugs, Indications)                                      |
-+-----------+---------------------------------------------+--------------+
-            |                                             |
-            v                                             v
-+---------------------------+        +---------------------------+
-|         SERVING           |        |         SERVING           |
-|                           |        |                           |
-|  Expansion Service        |------->|  Search API               |
-|  (Cypher traversals)      |        |  (FastAPI + OpenSearch)   |
-+---------------------------+        +---------------------------+
+```mermaid
+flowchart LR
+    subgraph Sources
+        A1[WHO ATC Index<br/>atcddd.fhi.no]
+        A2[MeSH RDF / XML<br/>NLM 2026]
+        A3[openFDA / DailyMed / EMA<br/>regulatory docs]
+    end
 
-            +---------------------------+
-            |  Neo4j Browser / Bloom UI |
-            +---------------------------+
+    subgraph ETL
+        B1[ATC parser<br/>Python]
+        B2[MeSH RDF→CSV<br/>Python + rdflib]
+        B3[Doc ingest + NER<br/>tag docs w/ ATC + MeSH]
+    end
+
+    subgraph Neo4j["Neo4j 5.x (Community / Aura)"]
+        C1[(ATC Graph<br/>5 levels)]
+        C2[(MeSH Graph<br/>16 categories, DAG)]
+        C3[(Documents<br/>Drugs, Indications)]
+    end
+
+    subgraph Serving
+        D1[Expansion Service<br/>Cypher traversals]
+        D2[Search API<br/>FastAPI + OpenSearch]
+        D3[Neo4j Browser / Bloom UI]
+    end
+
+    A1 --> B1 --> C1
+    A2 --> B2 --> C2
+    A3 --> B3 --> C3
+    C1 --> D1
+    C2 --> D1
+    C3 --> D2
+    D1 --> D2
+    Neo4j --> D3
 ```
 
 ---

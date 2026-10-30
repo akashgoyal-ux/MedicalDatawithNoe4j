@@ -3,22 +3,23 @@ from contextlib import contextmanager
 
 from neo4j import GraphDatabase
 
-from etl.config import NEO4J_DATABASE, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+from etl.config import neo4j_settings
 
 _driver = None
 
 
 def get_driver():
     global _driver
+    cfg = neo4j_settings()
     if _driver is None:
-        _driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+        _driver = GraphDatabase.driver(cfg["uri"], auth=(cfg["user"], cfg["password"]))
         _driver.verify_connectivity()
     return _driver
 
 
 @contextmanager
 def session():
-    with get_driver().session(database=NEO4J_DATABASE) as s:
+    with get_driver().session(database=neo4j_settings()["database"]) as s:
         yield s
 
 

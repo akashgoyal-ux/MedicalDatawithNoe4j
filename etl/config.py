@@ -13,11 +13,13 @@ def _required(name: str) -> str:
     return value
 
 
-# Neo4j Desktop local DBMS
-NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
-NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
+def neo4j_settings() -> dict[str, str]:
+    return {
+        "uri": os.getenv("NEO4J_URI", "bolt://localhost:7687"),
+        "user": os.getenv("NEO4J_USER", "neo4j"),
+        "password": os.getenv("NEO4J_PASSWORD", ""),
+        "database": os.getenv("NEO4J_DATABASE", "neo4j"),
+    }
 
 
 def atc_index_url() -> str:
@@ -38,3 +40,8 @@ def openfda_label_url() -> str:
 def dailymed_drug_url(set_id: str) -> str:
     """DailyMed drug-info URL template; must contain {set_id}."""
     return _required("DAILYMED_DRUG_URL_TEMPLATE").format(set_id=set_id)
+
+
+def neo4j_browser_url() -> str:
+    """Neo4j Browser base URL (used for cmd=query deep links)."""
+    return _required("NEO4J_BROWSER_URL")

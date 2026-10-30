@@ -6,6 +6,7 @@ Tabs:
   2. ATC decoder — type a code like C03XA01, see the 5-level breakdown
 """
 import sys
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -14,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from api.main import expand_term
+from etl.config import neo4j_browser_url, neo4j_settings
 from etl.neo4j_client import run
 
 st.set_page_config(page_title="Regulatory Intelligence Prototype", layout="wide")
@@ -52,7 +54,9 @@ def baseline_count(term: str) -> int:
     )[0]["c"]
 
 
-tab_search, tab_atc = st.tabs(["🔍 MeSH-expanded search", "💊 ATC code decoder"])
+tab_search, tab_atc, tab_graph = st.tabs(
+    ["🔍 MeSH-expanded search", "💊 ATC code decoder", "🕸️ Graph neighborhood"]
+)
 
 with tab_search:
     col_input, col_depth = st.columns([4, 1])
@@ -120,10 +124,146 @@ with tab_atc:
                 st.subheader("Drugs at this code")
                 st.dataframe(pd.DataFrame(drugs), hide_index=True)
 
-st.sidebar.markdown(
-    "Explore the raw graph in **Neo4j Browser** (`http://localhost:7474`) — try:\n"
-    "```cypher\n"
-    "MATCH p=(m:MeshDescriptor {name:'Diabetes Mellitus'})-[:BROADER_THAN*1..2]->(c)\n"
-    "RETURN p LIMIT 100\n"
-    "```"
-)
+# --- Disease traversal queries (graph form for Neo4j Browser + flat preview) ---
+TRAVERSAL_QUERIES = [
+    {
+        "title": "Ego network — everything connected to the disease",
+        "description": "Descendants (2 levels), synonyms, drugs, ATC chains, documents, and "
+                       "agency — one UNION per path family so nothing is lost to cross-product "
+                       "truncation. Note: some descriptors (e.g. Diabetes Mellitus) have no "
+                       "synonym terms in the 2026 MeSH XML.",
+        "graph": """
+MATCH (d:MeshDescriptor {name: '$NAME'})
+CALL (d) {
+  WITH d
+  MATCH p = (d)-[:BROADER_THAN*1..2]->(child:MeshDescriptor) RETURN p
+  UNION ALL
+  WITH d
+  MATCH p = (d)<-[:SYNONYM_OF]-(syn:MeshTerm) RETURN p
+  UNION ALL
+  WITH d
+  MATCH p = (drug:Drug)-[:INDICATED_FOR]->(d) RETURN p
+  UNION ALL
+  WITH d
+  MATCH p = (l1:ATCLevel1)-[:HAS_SUBGROUP|HAS_SUBSTANCE*0..4]->(l5:ATCLevel5)<-[:HAS_ATC_CODE]-(drug:Drug)-[:INDICATED_FOR]->(d) RETURN p
+  UNION ALL
+  WITH d
+  MATCH p = (a:Agency)<-[:ISSUED_BY]-(doc:RegulatoryDocument)-[:MENTIONS]->(d) RETURN p
+}
+RETURN p LIMIT 1000
+""".strip(),
+        "preview": """
+MATCH (d:MeshDescriptor {name: $name})
+OPTIONAL MATCH (d)-[:BROADER_THAN*1..2]->(child:MeshDescriptor)
+OPTIONAL MATCH (d)<-[:SYNONYM_OF]-(syn:MeshTerm)
+OPTIONAL MATCH (drug:Drug)-[:INDICATED_FOR]->(d)
+OPTIONAL MATCH (drug)-[:HAS_ATC_CODE]->(l5:ATCLevel5)
+OPTIONAL MATCH (doc:RegulatoryDocument)-[:MENTIONS]->(d)
+OPTIONAL MATCH (doc)-[:ISSUED_BY]->(a:Agency)
+RETURN count(DISTINCT child) AS `Descendants (2 levels)`,
+       count(DISTINCT syn) AS Synonyms,
+       count(DISTINCT drug) AS Drugs,
+       count(DISTINCT l5) AS `Drugs w/ ATC code`,
+       count(DISTINCT doc) AS Documents,
+       count(DISTINCT a) AS Agencies
+""".strip(),
+    },
+    {
+        "title": "Full descendant subtree (up to 13 levels)",
+        "description": "Every MeSH descriptor below the disease — the expansion set used by search.",
+        "graph": """
+MATCH path = (d:MeshDescriptor {name: '$NAME'})-[:BROADER_THAN*1..13]->(child)
+RETURN path
+""".strip(),
+        "preview": """
+MATCH (d:MeshDescriptor {name: $name})-[:BROADER_THAN*1..13]->(child:MeshDescriptor)
+RETURN DISTINCT child.name AS Descendant, child.ui AS UI
+ORDER BY Descendant LIMIT 200
+""".strip(),
+    },
+    {
+        "title": "Ancestors — both parents and the paths to the roots",
+        "description": "MeSH is a DAG: e.g. Diabetes Mellitus sits under Endocrine AND Metabolic diseases.",
+        "graph": """
+MATCH path = (ancestor:MeshDescriptor)-[:BROADER_THAN*1..13]->(d:MeshDescriptor {name: '$NAME'})
+RETURN path
+""".strip(),
+        "preview": """
+MATCH (ancestor:MeshDescriptor)-[:BROADER_THAN*1..13]->(d:MeshDescriptor {name: $name})
+RETURN DISTINCT ancestor.name AS Ancestor, ancestor.ui AS UI
+ORDER BY Ancestor LIMIT 200
+""".strip(),
+    },
+    {
+        "title": "Disease → drugs → ATC biography",
+        "description": "Crosses both vocabularies: indicated drugs and their 5-level ATC classification.",
+        "graph": """
+MATCH (d:MeshDescriptor {name: '$NAME'})<-[:INDICATED_FOR]-(drug:Drug)
+OPTIONAL MATCH atcPath = (:ATCLevel1)-[:HAS_SUBGROUP|HAS_SUBSTANCE*..4]->(:ATCLevel5)-[:CLASSIFIES]->(drug)
+RETURN d, drug, atcPath
+""".strip(),
+        "preview": """
+MATCH (d:MeshDescriptor {name: $name})<-[:INDICATED_FOR]-(drug:Drug)
+OPTIONAL MATCH (l5:ATCLevel5)-[:CLASSIFIES]->(drug)
+RETURN drug.name AS Drug, l5.code AS `ATC code`, l5.name AS `ATC substance`
+ORDER BY Drug
+""".strip(),
+    },
+    {
+        "title": "Document audit trail — doc → drug → ATC code",
+        "description": "Regulatory documents mentioning the disease, what drug they're about, and its ATC code.",
+        "graph": """
+MATCH path = (doc:RegulatoryDocument)-[:MENTIONS]->(d:MeshDescriptor {name: '$NAME'})
+OPTIONAL MATCH aboutPath = (doc)-[:ABOUT]->(:Drug)-[:HAS_ATC_CODE]->(:ATCLevel5)
+RETURN path, aboutPath
+""".strip(),
+        "preview": """
+MATCH (doc:RegulatoryDocument)-[:MENTIONS]->(d:MeshDescriptor {name: $name})
+OPTIONAL MATCH (doc)-[:ABOUT]->(drug:Drug)
+RETURN doc.title AS Document, doc.date AS Date, drug.name AS Drug, doc.url AS URL
+ORDER BY Date DESC LIMIT 100
+""".strip(),
+    },
+]
+
+
+def _browser_deep_link(cypher: str) -> str:
+    """Neo4j Browser deep link: cmd=edit pre-loads the editor (cmd=query is not
+    executed by newer Browser versions). One Run click then shows the graph.
+    Prepend USE so the query lands on the prototype's database, not the default."""
+    full = f"USE {neo4j_settings()['database']}\n{cypher}"
+    return f"{neo4j_browser_url()}?cmd=edit&arg={urllib.parse.quote(full)}"
+
+
+with tab_graph:
+    disease = st.text_input("Disease (MeSH descriptor name)", value="Diabetes Mellitus",
+                            key="graph_disease")
+    choice = st.selectbox("Traversal", [q["title"] for q in TRAVERSAL_QUERIES])
+    query = next(q for q in TRAVERSAL_QUERIES if q["title"] == choice)
+    st.caption(query["description"])
+
+    if disease:
+        exists = run("MATCH (d:MeshDescriptor {name: $name}) RETURN d.ui AS ui",
+                     name=disease)
+        if not exists:
+            st.warning(f"**{disease}** is not a MeSH descriptor name — try the exact "
+                       "name shown by the search tab (e.g. 'Diabetes Mellitus').")
+        else:
+            graph_cypher = query["graph"].replace("$NAME", disease.replace("'", "\\'"))
+            st.code(graph_cypher, language="cypher")
+            st.link_button("▶️ Open in Neo4j Browser (loads query — hit ▶ Run for graph view)",
+                           _browser_deep_link(graph_cypher))
+            st.subheader("Preview (table)")
+            preview_rows = run(query["preview"], name=disease)
+            if preview_rows:
+                st.dataframe(pd.DataFrame(preview_rows), hide_index=True)
+            else:
+                st.info("No results for this disease.")
+
+with st.sidebar:
+    db = neo4j_settings()["database"]
+    st.markdown(
+        f"Explore the raw graph in [Neo4j Browser]({neo4j_browser_url()}) "
+        f"— select the **`{db}`** database, or use the deep links in the "
+        "🕸️ Graph neighborhood tab (they include `USE` automatically)."
+    )

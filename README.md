@@ -8,6 +8,8 @@ A working prototype of the architecture from the talk
 - **NLM MeSH 2026** loaded as a multi-parent DAG (descriptors, tree numbers, entry-term synonyms).
 - **FDA drug labels** (openFDA) ingested as regulatory documents, auto-tagged with MeSH terms
   via Aho-Corasick dictionary matching, linked to drugs and ATC codes.
+- **FAERS adverse events** (openFDA `drug/event`) ingested per drug: reports → suspect drugs →
+  reactions (MedDRA PTs), with reactions auto-cross-linked to MeSH descriptors when names match.
 - **Graph-assisted search expansion**: user term → MeSH traversal → expanded term set →
   document retrieval, reproducing the talk's "search diabetes mellitus, find every agency's
   terminology" behavior.
@@ -41,12 +43,13 @@ get_driver().execute_query('CREATE DATABASE medical IF NOT EXISTS', database_='s
                                                       # omit --groups for all 14 (~1500 pages, slow)
 .venv/bin/python -m etl.load_mesh                     # full MeSH 2026 (~30k descriptors, ~300k terms)
 .venv/bin/python -m etl.ingest_openfda --limit 250    # FDA labels, MeSH-tagged
+.venv/bin/python -m etl.ingest_faers                  # FAERS adverse events for graphed drugs
 ```
 
 ## Run
 
 ```bash
-.venv/bin/uvicorn api.main:app --port 8000            # API: /docs, /expand, /atc/{code}, /search
+.venv/bin/uvicorn api.main:app --port 8000            # API: /docs, /expand, /atc/{code}, /search, /safety/{drug}
 .venv/bin/streamlit run app/streamlit_app.py          # demo UI on :8501
 ```
 

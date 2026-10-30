@@ -37,6 +37,11 @@ def openfda_label_url() -> str:
     return _required("OPENFDA_LABEL_URL")
 
 
+def openfda_event_url() -> str:
+    """openFDA drug adverse event (FAERS) endpoint."""
+    return _required("OPENFDA_EVENT_URL")
+
+
 def dailymed_drug_url(set_id: str) -> str:
     """DailyMed drug-info URL template; must contain {set_id}."""
     return _required("DAILYMED_DRUG_URL_TEMPLATE").format(set_id=set_id)

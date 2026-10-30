@@ -144,6 +144,36 @@ def search(term: str = Query(..., min_length=2),
     )
 
 
+@app.get("/safety/{drug_name}")
+def drug_safety(drug_name: str, limit: int = Query(15, ge=1, le=100)):
+    """FAERS profile for a drug: report tallies + top reactions (MedDRA PTs)."""
+    summary = run(
+        """
+        MATCH (d:Drug {name: $drug})-[:HAS_REPORT]->(r:AdverseEventReport)
+        RETURN count(r) AS reports,
+               sum(CASE WHEN r.serious THEN 1 ELSE 0 END) AS serious,
+               sum(CASE WHEN r.death THEN 1 ELSE 0 END) AS deaths,
+               sum(CASE WHEN r.hospitalization THEN 1 ELSE 0 END) AS hospitalizations
+        """,
+        drug=drug_name,
+    )[0]
+    if summary["reports"] == 0:
+        raise HTTPException(404, f"no FAERS reports found for {drug_name!r}")
+    reactions = run(
+        """
+        MATCH (d:Drug {name: $drug})-[:HAS_REPORT]->(r:AdverseEventReport)
+              -[:REPORTS_REACTION]->(x:Reaction)
+        OPTIONAL MATCH (x)-[:MAPS_TO_MESH]->(m:MeshDescriptor)
+        RETURN x.name AS reaction, count(r) AS reports,
+               sum(CASE WHEN r.death THEN 1 ELSE 0 END) AS deaths,
+               m.name AS meshDescriptor
+        ORDER BY reports DESC, deaths DESC LIMIT $limit
+        """,
+        drug=drug_name, limit=limit,
+    )
+    return {"drug": drug_name, "summary": summary, "topReactions": reactions}
+
+
 @app.get("/health")
 def health():
     return run("RETURN 1 AS ok")[0]

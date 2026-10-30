@@ -46,3 +46,46 @@ def test_tag_document_whole_phrase():
     hits = tag_document(automaton,
                         "Indicated for Diabetes Mellitus and prevention of diabetic foot ulcers.")
     assert hits == ["D003920", "D017719"]
+
+
+def test_normalize_product_name():
+    from etl.ingest_faers import normalize_product_name
+    assert normalize_product_name("DURAGESIC-100") == "duragesic"
+    assert normalize_product_name("GLIPIZIDE XL") == "glipizide"
+    assert normalize_product_name("IBUPROFEN 200 MG") == "ibuprofen"
+    assert normalize_product_name("METOPROLOL TARTRATE") == "metoprolol tartrate"
+
+
+def test_extract_suspect_names_prefers_suspect_and_openfda():
+    from etl.ingest_faers import extract_suspect_names
+    report = {"patient": {"drug": [
+        {"drugcharacterization": "2", "medicinalproduct": "ASPIRIN"},
+        {"drugcharacterization": "1", "medicinalproduct": "GLIPIZIDE XL",
+         "openfda": {"generic_name": ["GLIPIZIDE"]}},
+    ]}}
+    assert extract_suspect_names(report) == ["GLIPIZIDE"]
+
+
+def test_extract_suspect_names_falls_back_to_normalized_product():
+    from etl.ingest_faers import extract_suspect_names
+    report = {"patient": {"drug": [{"drugcharacterization": "1",
+                                    "medicinalproduct": "DURAGESIC-100"}]}}
+    assert extract_suspect_names(report) == ["duragesic"]
+
+
+def test_extract_reactions_dedupes_and_titles():
+    from etl.ingest_faers import extract_reactions
+    report = {"patient": {"reaction": [
+        {"reactionmeddrapt": "OVERDOSE"},
+        {"reactionmeddrapt": "overdose"},
+        {"reactionmeddrapt": "NAUSEA"},
+        {},
+    ]}}
+    assert extract_reactions(report) == ["Nausea", "Overdose"]
+
+
+def test_iso_date():
+    from etl.ingest_faers import iso_date
+    assert iso_date("20080707") == "2008-07-07"
+    assert iso_date(None) is None
+    assert iso_date("2008") is None

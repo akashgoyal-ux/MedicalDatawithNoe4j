@@ -54,8 +54,9 @@ def baseline_count(term: str) -> int:
     )[0]["c"]
 
 
-tab_search, tab_atc, tab_graph = st.tabs(
-    ["🔍 MeSH-expanded search", "💊 ATC code decoder", "🕸️ Graph neighborhood"]
+tab_search, tab_atc, tab_graph, tab_safety = st.tabs(
+    ["🔍 MeSH-expanded search", "💊 ATC code decoder", "🕸️ Graph neighborhood",
+     "⚠️ Drug safety (FAERS)"]
 )
 
 with tab_search:
@@ -259,6 +260,60 @@ with tab_graph:
                 st.dataframe(pd.DataFrame(preview_rows), hide_index=True)
             else:
                 st.info("No results for this disease.")
+
+with tab_safety:
+    drugs_with_reports = [r["n"] for r in run(
+        "MATCH (d:Drug)-[:HAS_REPORT]->(:AdverseEventReport) "
+        "RETURN DISTINCT d.name AS n ORDER BY n"
+    )]
+    if not drugs_with_reports:
+        st.info("No FAERS data yet — run `python -m etl.ingest_faers` first.")
+    else:
+        drug = st.selectbox("Drug (with FAERS reports)", drugs_with_reports)
+        summary = run(
+            """
+            MATCH (d:Drug {name: $drug})-[:HAS_REPORT]->(r:AdverseEventReport)
+            RETURN count(r) AS reports,
+                   sum(CASE WHEN r.serious THEN 1 ELSE 0 END) AS serious,
+                   sum(CASE WHEN r.death THEN 1 ELSE 0 END) AS deaths,
+                   sum(CASE WHEN r.hospitalization THEN 1 ELSE 0 END) AS hospitalizations
+            """,
+            drug=drug,
+        )[0]
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Reports (suspect)", summary["reports"])
+        m2.metric("Serious", summary["serious"])
+        m3.metric("Deaths", summary["deaths"])
+        m4.metric("Hospitalizations", summary["hospitalizations"])
+
+        reactions = run(
+            """
+            MATCH (d:Drug {name: $drug})-[:HAS_REPORT]->(r:AdverseEventReport)
+                  -[:REPORTS_REACTION]->(x:Reaction)
+            OPTIONAL MATCH (x)-[:MAPS_TO_MESH]->(m:MeshDescriptor)
+            RETURN x.name AS Reaction, count(r) AS Reports,
+                   sum(CASE WHEN r.death THEN 1 ELSE 0 END) AS Deaths,
+                   coalesce(m.name, '') AS `MeSH descriptor`
+            ORDER BY Reports DESC, Deaths DESC LIMIT 15
+            """,
+            drug=drug,
+        )
+        left, right = st.columns([1, 1])
+        with left:
+            st.subheader("Top reactions")
+            st.bar_chart(pd.DataFrame(reactions).set_index("Reaction")[["Reports"]])
+        with right:
+            st.subheader("Reaction detail (with MeSH cross-link)")
+            st.dataframe(pd.DataFrame(reactions), hide_index=True)
+
+        safety_graph = f"""
+MATCH (d:Drug {{name: '{drug.replace("'", "\\'")}'}})-[:HAS_REPORT]->(r:AdverseEventReport)-[:REPORTS_REACTION]->(x:Reaction)
+OPTIONAL MATCH meshPath = (x)-[:MAPS_TO_MESH]->(m:MeshDescriptor)
+RETURN d, r, x, meshPath
+LIMIT 300
+""".strip()
+        st.link_button("▶️ Open safety graph in Neo4j Browser",
+                       _browser_deep_link(safety_graph))
 
 with st.sidebar:
     db = neo4j_settings()["database"]

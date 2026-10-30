@@ -8,7 +8,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import os
+
+import requests
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from etl.neo4j_client import run
@@ -16,7 +20,15 @@ from etl.neo4j_client import run
 app = FastAPI(
     title="Medical Data Neo4j — prototype",
     description="Graph-assisted regulatory search expansion (ATC + MeSH), per implementation-plan.md",
-    version="0.1.0",
+    version="0.2.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in
+                   os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -172,6 +184,113 @@ def drug_safety(drug_name: str, limit: int = Query(15, ge=1, le=100)):
         drug=drug_name, limit=limit,
     )
     return {"drug": drug_name, "summary": summary, "topReactions": reactions}
+
+
+@app.get("/timeline")
+def approval_timeline(term: str = Query(..., min_length=2),
+                      depth: int = Query(13, ge=1, le=13)):
+    """Approvals per year for a disease (graph-expanded) — temporal strategy view."""
+    result = expand_term(term, depth)
+    if result is None:
+        raise HTTPException(404, f"no MeSH descriptor matched {term!r}")
+    rows = run(
+        """
+        MATCH (d:RegulatoryDocument)-[:MENTIONS]->(m:MeshDescriptor)
+        WHERE toLower(m.name) IN [t IN $terms | toLower(t)] AND d.date IS NOT NULL
+        RETURN substring(d.date, 0, 4) AS year, count(DISTINCT d) AS approvals
+        ORDER BY year
+        """,
+        terms=result["terms"],
+    )
+    return {"term": term, "matched_descriptor": result["descriptor"], "timeline": rows}
+
+
+@app.get("/trials")
+def trials_for_disease(term: str = Query(..., min_length=2),
+                       depth: int = Query(5, ge=1, le=13),
+                       limit: int = Query(50, ge=1, le=200)):
+    """Pipeline view: trials studying a disease or its descendants."""
+    result = expand_term(term, depth)
+    if result is None:
+        raise HTTPException(404, f"no MeSH descriptor matched {term!r}")
+    rows = run(
+        """
+        MATCH (t:Trial)-[:STUDIES]->(m:MeshDescriptor)
+        WHERE toLower(m.name) IN [x IN $terms | toLower(x)]
+        OPTIONAL MATCH (t)-[:SPONSORED_BY]->(s:Sponsor)
+        OPTIONAL MATCH (t)-[:TESTS]->(d:Drug)
+        RETURN t.nctId AS nctId, t.title AS title, t.phase AS phase,
+               t.status AS status, t.startDate AS startDate,
+               s.name AS sponsor, collect(DISTINCT d.name) AS drugsTested
+        ORDER BY t.startDate DESC LIMIT $limit
+        """,
+        terms=result["terms"], limit=limit,
+    )
+    return {"term": term, "matched_descriptor": result["descriptor"],
+            "count": len(rows), "trials": rows}
+
+
+@app.get("/similar/{drug_name}")
+def similar_drugs(drug_name: str, limit: int = Query(10, ge=1, le=50)):
+    """Repurposing candidates: drugs sharing indications / reaction profiles."""
+    rows = run(
+        """
+        MATCH (d:Drug {name: $drug})-[e:SIMILAR_TO]-(other:Drug)
+        RETURN other.name AS drug, e.sharedIndications AS sharedIndications,
+               e.sharedReactions AS sharedReactions, e.score AS score
+        ORDER BY score DESC LIMIT $limit
+        """,
+        drug=drug_name, limit=limit,
+    )
+    if not rows:
+        raise HTTPException(404, f"no SIMILAR_TO edges for {drug_name!r} — "
+                                 "run python -m etl.compute_similarity first")
+    return {"drug": drug_name, "similar": rows}
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+@app.post("/chat")
+def chat_endpoint(req: ChatRequest):
+    """GraphRAG chatbot (LangGraph + local Ollama LLM) over the knowledge graph."""
+    from chat.agent import chat
+    try:
+        return chat(req.message)
+    except Exception as e:  # LLM offline etc.
+        raise HTTPException(503, f"chat unavailable: {e}")
+
+
+@app.get("/vsearch")
+def vector_search(q: str = Query(..., min_length=2), k: int = Query(5, ge=1, le=20)):
+    """Semantic vector search over docs, drugs, reactions, active MeSH terms."""
+    base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    model = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
+    r = requests.post(f"{base}/api/embed", json={"model": model, "input": [q]}, timeout=120)
+    r.raise_for_status()
+    vec = r.json()["embeddings"][0]
+    hits = []
+    for index, kind in (("docEmbedding", "document"), ("meshEmbedding", "meshTerm"),
+                        ("reactionEmbedding", "reaction"), ("drugEmbedding", "drug")):
+        for row in run(
+            f"CALL db.index.vector.queryNodes('{index}', $k, $vec) YIELD node, score "
+            "RETURN coalesce(node.title, node.name) AS text, score",
+            k=k, vec=vec,
+        ):
+            hits.append({"kind": kind, "text": row["text"], "score": row["score"]})
+    hits.sort(key=lambda h: h["score"], reverse=True)
+    return {"query": q, "hits": hits[: k * 2]}
+
+
+@app.get("/drugs")
+def list_drugs(with_reports: bool = False):
+    """Drug names in the graph; optionally only those with FAERS reports."""
+    if with_reports:
+        return [r["n"] for r in run(
+            "MATCH (d:Drug)-[:HAS_REPORT]->(:AdverseEventReport) "
+            "RETURN DISTINCT d.name AS n ORDER BY n")]
+    return [r["n"] for r in run("MATCH (d:Drug) RETURN d.name AS n ORDER BY n")]
 
 
 @app.get("/health")

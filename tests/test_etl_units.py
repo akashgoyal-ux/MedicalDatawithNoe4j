@@ -89,3 +89,28 @@ def test_iso_date():
     assert iso_date("20080707") == "2008-07-07"
     assert iso_date(None) is None
     assert iso_date("2008") is None
+
+
+def test_parse_trial_extracts_modules():
+    from etl.ingest_trials import parse_trial
+    study = {
+        "protocolSection": {
+            "identificationModule": {"nctId": "NCT001", "briefTitle": "Trial of X"},
+            "statusModule": {"overallStatus": "RECRUITING",
+                             "startDateStruct": {"date": "2025-01"}},
+            "sponsorCollaboratorsModule": {"leadSponsor": {"name": "Acme Pharma"}},
+            "designModule": {"phases": ["PHASE3"]},
+            "armsInterventionsModule": {"interventions": [
+                {"type": "DRUG", "name": "Metformin"},
+                {"type": "OTHER", "name": "Placebo"},
+            ]},
+        },
+        "derivedSection": {"conditionBrowseModule": {"meshes": [
+            {"id": "D003920", "term": "Diabetes Mellitus"}]}},
+    }
+    t = parse_trial(study)
+    assert t["nctId"] == "NCT001"
+    assert t["phase"] == "PHASE3"
+    assert t["sponsor"] == "Acme Pharma"
+    assert t["condition_mesh_uis"] == ["D003920"]
+    assert t["interventions"] == ["Metformin"]  # non-drug intervention excluded

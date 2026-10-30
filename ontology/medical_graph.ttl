@@ -1,0 +1,93 @@
+# Medical graph ontology (RDFS-lite) — single source of truth for
+# node labels, relationship types, and key properties used in Neo4j.
+# Parsed by etl/ontology.py via rdflib; enforced by tests/test_ontology.py.
+
+@prefix mg:   <https://example.org/medical-graph#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+mg:MedicalGraph a owl:Ontology ;
+    rdfs:label "Medical Regulatory Graph Ontology" ;
+    rdfs:comment "Vocabulary + regulatory + safety + pipeline graph model"@en .
+
+# ---------- Node classes ----------
+mg:Drug a rdfs:Class ;
+    rdfs:label "Drug" ;
+    mg:keyProperty "name" ;
+    rdfs:comment "A medicinal product / active ingredient (INN or generic name)" .
+
+mg:DrugAlias a rdfs:Class ;
+    rdfs:label "Drug alias (brand/ingredient)" ;
+    mg:keyProperty "name" ;
+    rdfs:comment "RxNorm brand name or ingredient alias of a Drug" .
+
+mg:ATCLevel1 a rdfs:Class ; rdfs:label "ATC level 1 (anatomical main group)" ; mg:keyProperty "code" .
+mg:ATCLevel2 a rdfs:Class ; rdfs:label "ATC level 2 (therapeutic subgroup)" ; mg:keyProperty "code" .
+mg:ATCLevel3 a rdfs:Class ; rdfs:label "ATC level 3 (pharmacological subgroup)" ; mg:keyProperty "code" .
+mg:ATCLevel4 a rdfs:Class ; rdfs:label "ATC level 4 (chemical subgroup)" ; mg:keyProperty "code" .
+mg:ATCLevel5 a rdfs:Class ; rdfs:label "ATC level 5 (chemical substance)" ; mg:keyProperty "code" .
+
+mg:MeshDescriptor a rdfs:Class ;
+    rdfs:label "MeSH descriptor" ;
+    mg:keyProperty "ui" ;
+    rdfs:comment "NLM Medical Subject Heading descriptor" .
+
+mg:MeshTerm a rdfs:Class ;
+    rdfs:label "MeSH entry term (synonym)" ;
+    mg:keyProperty "name,descriptorUi" .
+
+mg:RegulatoryDocument a rdfs:Class ;
+    rdfs:label "Regulatory document" ;
+    mg:keyProperty "docId" ;
+    rdfs:comment "Agency document (e.g. FDA drug label)" .
+
+mg:Agency a rdfs:Class ;
+    rdfs:label "Regulatory agency" ;
+    mg:keyProperty "name" .
+
+mg:Trial a rdfs:Class ;
+    rdfs:label "Clinical trial" ;
+    mg:keyProperty "nctId" ;
+    rdfs:comment "ClinicalTrials.gov study" .
+
+mg:Sponsor a rdfs:Class ;
+    rdfs:label "Trial sponsor" ;
+    mg:keyProperty "name" .
+
+mg:AdverseEventReport a rdfs:Class ;
+    rdfs:label "FAERS adverse event report" ;
+    mg:keyProperty "reportId" .
+
+mg:Reaction a rdfs:Class ;
+    rdfs:label "Adverse reaction (MedDRA PT)" ;
+    mg:keyProperty "name" .
+
+mg:ICD10Code a rdfs:Class ;
+    rdfs:label "ICD-10-CM clinical code" ;
+    mg:keyProperty "code" .
+
+# ---------- Relationship properties (edge types) ----------
+mg:HAS_SUBGROUP  a owl:ObjectProperty ; rdfs:domain mg:ATCLevel1 ; rdfs:range mg:ATCLevel2 ;
+    rdfs:comment "ATC parent -> child subgroup (levels 1-4)" .
+mg:HAS_SUBSTANCE a owl:ObjectProperty ; rdfs:domain mg:ATCLevel4 ; rdfs:range mg:ATCLevel5 ;
+    rdfs:comment "ATC chemical subgroup -> substance" .
+mg:CLASSIFIES    a owl:ObjectProperty ; rdfs:domain mg:ATCLevel5 ; rdfs:range mg:Drug .
+mg:HAS_ATC_CODE  a owl:ObjectProperty ; rdfs:domain mg:Drug ; rdfs:range mg:ATCLevel5 .
+mg:BROADER_THAN  a owl:ObjectProperty ; rdfs:domain mg:MeshDescriptor ; rdfs:range mg:MeshDescriptor ;
+    rdfs:comment "MeSH parent -> child (multi-parent DAG from tree numbers)" .
+mg:SYNONYM_OF    a owl:ObjectProperty ; rdfs:domain mg:MeshTerm ; rdfs:range mg:MeshDescriptor .
+mg:INDICATED_FOR a owl:ObjectProperty ; rdfs:domain mg:Drug ; rdfs:range mg:MeshDescriptor .
+mg:MENTIONS      a owl:ObjectProperty ; rdfs:domain mg:RegulatoryDocument ; rdfs:range mg:MeshDescriptor .
+mg:ABOUT         a owl:ObjectProperty ; rdfs:domain mg:RegulatoryDocument ; rdfs:range mg:Drug .
+mg:ISSUED_BY     a owl:ObjectProperty ; rdfs:domain mg:RegulatoryDocument ; rdfs:range mg:Agency .
+mg:STUDIES       a owl:ObjectProperty ; rdfs:domain mg:Trial ; rdfs:range mg:MeshDescriptor .
+mg:TESTS         a owl:ObjectProperty ; rdfs:domain mg:Trial ; rdfs:range mg:Drug .
+mg:SPONSORED_BY  a owl:ObjectProperty ; rdfs:domain mg:Trial ; rdfs:range mg:Sponsor .
+mg:HAS_REPORT    a owl:ObjectProperty ; rdfs:domain mg:Drug ; rdfs:range mg:AdverseEventReport .
+mg:REPORTS_REACTION a owl:ObjectProperty ; rdfs:domain mg:AdverseEventReport ; rdfs:range mg:Reaction .
+mg:MAPS_TO_MESH  a owl:ObjectProperty ; rdfs:domain mg:Reaction ; rdfs:range mg:MeshDescriptor .
+mg:ALIAS_OF      a owl:ObjectProperty ; rdfs:domain mg:DrugAlias ; rdfs:range mg:Drug .
+mg:ALIGNS_WITH   a owl:ObjectProperty ; rdfs:domain mg:ICD10Code ; rdfs:range mg:MeshDescriptor .
+mg:SIMILAR_TO    a owl:ObjectProperty ; rdfs:domain mg:Drug ; rdfs:range mg:Drug ;
+    rdfs:comment "Derived: shared indications + shared reaction profile" .

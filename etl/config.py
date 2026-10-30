@@ -42,6 +42,21 @@ def openfda_event_url() -> str:
     return _required("OPENFDA_EVENT_URL")
 
 
+def clinicaltrials_api_url() -> str:
+    """ClinicalTrials.gov API v2 studies endpoint."""
+    return _required("CLINICALTRIALS_API_URL")
+
+
+def rxnav_api_url() -> str:
+    """RxNav (RxNorm) REST API base URL."""
+    return _required("RXNAV_API_URL")
+
+
+def icd10cm_api_url() -> str:
+    """NLM Clinical Tables ICD-10-CM search endpoint (no key required)."""
+    return _required("ICD10CM_API_URL")
+
+
 def dailymed_drug_url(set_id: str) -> str:
     """DailyMed drug-info URL template; must contain {set_id}."""
     return _required("DAILYMED_DRUG_URL_TEMPLATE").format(set_id=set_id)

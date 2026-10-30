@@ -16,9 +16,15 @@ A working prototype of the architecture from the talk
 
 ## Stack
 
-- **Python 3.11+** (ETL, FastAPI service, Streamlit demo — one language throughout)
-- **Neo4j Desktop** local DBMS (Enterprise/Community 5.x+; this prototype used 2026.03)
-- Data: WHOCC ATC/DDD Index, NLM MeSH XML, openFDA `drug/label` — all public
+- **Python 3.11+** (ETL, FastAPI service, LangGraph chatbot, Streamlit demo)
+- **React (Vite)** business dashboard in `web/`
+- **Neo4j Desktop** local DBMS (Enterprise 2026.03 — used for vector indexes)
+- **Ollama** (local): `nomic-embed-text` for embeddings, `llama3.2:3b` for chat
+- **Ontology-governed schema**: `ontology/medical_graph.ttl` (RDFS via rdflib) is the
+  single source of truth for all node labels / relationship types — enforced by
+  `tests/test_ontology.py`
+- Data: WHOCC ATC/DDD Index, NLM MeSH XML, openFDA labels + FAERS, ClinicalTrials.gov,
+  RxNorm (RxNav), ICD-10-CM (NLM Clinical Tables) — all public, no licenses needed
 
 ## Setup
 
@@ -44,14 +50,28 @@ get_driver().execute_query('CREATE DATABASE medical IF NOT EXISTS', database_='s
 .venv/bin/python -m etl.load_mesh                     # full MeSH 2026 (~30k descriptors, ~300k terms)
 .venv/bin/python -m etl.ingest_openfda --limit 250    # FDA labels, MeSH-tagged
 .venv/bin/python -m etl.ingest_faers                  # FAERS adverse events for graphed drugs
+.venv/bin/python -m etl.ingest_trials                 # ClinicalTrials.gov pipeline
+.venv/bin/python -m etl.load_rxnorm                   # brand/ingredient aliases + ATC backfill
+.venv/bin/python -m etl.load_icd                      # ICD-10-CM alignment for active diseases
+.venv/bin/python -m etl.compute_similarity            # drug SIMILAR_TO edges (repurposing)
+.venv/bin/python -m etl.embed_nodes                   # Ollama embeddings + vector indexes
+.venv/bin/python -m etl.watch                         # diff vs last openFDA pull (weekly cron)
 ```
+
+Prerequisite for embeddings + chat: `ollama serve` plus
+`ollama pull nomic-embed-text && ollama pull llama3.2:3b`.
 
 ## Run
 
 ```bash
-.venv/bin/uvicorn api.main:app --port 8000            # API: /docs, /expand, /atc/{code}, /search, /safety/{drug}
-.venv/bin/streamlit run app/streamlit_app.py          # demo UI on :8501
+.venv/bin/uvicorn api.main:app --port 8000            # REST API (/docs lists all endpoints)
+cd web && npm install && npm run dev                  # React dashboard on :5173
+.venv/bin/streamlit run app/streamlit_app.py          # (optional) Streamlit demo on :8501
 ```
+
+Chat: `POST /chat` or the **Ask Ria** tab — a LangGraph agent (local llama3.2) with tools
+for MeSH expansion, document search, ATC decode, FAERS safety, trials, similarity, and
+vector semantic search.
 
 Neo4j Browser at http://localhost:7474 (select the `medical` database) for raw exploration.
 
@@ -74,8 +94,12 @@ Neo4j Browser at http://localhost:7474 (select the `medical` database) for raw e
 ## Layout
 
 ```
-etl/    config (.env), Neo4j client, schema, ATC loader, MeSH loader, openFDA ingest
-api/    FastAPI expansion/search service
-app/    Streamlit demo (MeSH-expanded search + ATC decoder tabs)
-tests/  offline unit tests for parsers
+ontology/ medical_graph.ttl — RDFS schema of every node/edge type (rdflib-parsed)
+etl/      config (.env), Neo4j client, ontology registry, loaders (ATC, MeSH,
+          openFDA labels, FAERS, trials, RxNorm, ICD-10), similarity, embeddings, watch
+api/      FastAPI: /expand /search /atc /safety /trials /timeline /similar /vsearch /chat
+chat/     LangGraph ReAct agent (Ollama) with graph tools
+app/      Streamlit demo (search, ATC, graph neighborhood w/ Browser deep links, safety)
+web/      React dashboard (Search · Pipeline · Safety · ATC · Ask Ria)
+tests/    offline unit tests + ontology governance tests
 ```
